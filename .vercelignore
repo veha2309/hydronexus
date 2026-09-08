@@ -1,0 +1,7 @@
+.venv
+.env*
+.next
+.git
+backend
+node_modules
+*.tsbuildinfo

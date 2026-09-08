@@ -1,0 +1,21 @@
+# HydroNexus: problem statement coverage
+
+| Requirement | Implemented prototype | Remaining production work |
+|---|---|---|
+| Browser-native 3D fields | Three.js regional depth meshes for temperature, salinity, speed, chlorophyll and registered scalar fields | Continuous volume ray marching, bathymetric masks and level-of-detail tiling |
+| Depth slices | Interactive sampled plane throughout model depth range | Mask-aware higher-order interpolation |
+| Isosurface extraction | Interpolated shallowest threshold crossing per column | General marching cubes including disconnected/folded surfaces |
+| Time animation | Model time slider, play/pause, selectable speed | Incremental chunk fetching, forecast-cycle management |
+| Instrument overlays | Georeferenced Argo, Glider, CTD, BGC markers and depth paths, timestamps | Real feeds, full time-resolved trajectories, sensor QC and provenance adapters |
+| Profiles and comparison | Chart, numeric table, export, 4D model sampling, RMSE, signed bias | Match tolerances, uncertainty, operational validation and metadata/unit harmonization |
+| NetCDF ingestion | xarray CF-aware model parser, aliases/standard names, selected unit normalization, bounded subset | Curvilinear/staggered grids, arbitrary calendars, Argo-profile NetCDF, chunked jobs and streaming |
+| Delimited text | Validated CSV/TSV observation imports with per-instrument/time grouping | Additional ASCII dialects and per-sensor adapters |
+| Dynamic colorbar | Palettes, min/max, linear/log, opacity | Color-vision review and organization-specific palettes |
+| Vertical exaggeration | Interactive display multiplier | Scientifically calibrated distance scale and arbitrary projections |
+| Modular variables | Python registry and common frontend scalar-field contract | Formal plugin packaging/versioning and vector/tensor renderer plugins |
+| REST backend | Demo dataset/variables/slice/profile endpoints; optional Python ingestion service | Durable catalog/storage, auth, quotas, caching, distributed jobs |
+| INCOIS deployability | Portable Next.js frontend and Python service with local setup | Infrastructure sizing, integration review, operations and monitoring |
+| Open standards | Selected CF-aware NetCDF parsing | CF conformance certification, OGC WMS/WCS and OPeNDAP serving |
+| Public outreach | Explore mode with guided topics and calculated profile explanation | Curriculum, localization, richer narrative tours and accessible nonvisual alternatives |
+
+The bundled synthetic demonstration is suitable for explaining the workflow, not for hazard advisories, navigation, fisheries decisions or claims of improved forecast accuracy.
