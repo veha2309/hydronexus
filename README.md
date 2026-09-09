@@ -29,8 +29,8 @@ Restart `npm run dev` after creating `.env.local`. The data service's interactiv
 ## Main workflow
 
 1. Select temperature, salinity, current speed or chlorophyll.
-2. Orbit the 3D scene, move the depth slider and animate model time.
-3. Switch between layered volume, depth slice and isosurface views. Adjust opacity, palette, min/max, log scale and vertical exaggeration.
+2. Switch between the globe, 3D water column, north-up surface map and east-west depth section. Orbit or zoom the scene, move the depth slider and animate model time.
+3. Open Display settings for layered volume, depth slice and isosurface rendering. Adjust opacity, palette, min/max, log scale and vertical exaggeration. Section latitude moves the cut; profiles within 0.5° are projected onto it.
 4. Click an Argo, Glider, CTD or BGC marker, or choose one from the keyboard-accessible observation list.
 5. Inspect the vertical profile, model comparison, RMSE and bias. Export the numerical comparison as CSV.
 6. Try Explore mode for three guided educational topics.
@@ -39,7 +39,7 @@ Restart `npm run dev` after creating `.env.local`. The data service's interactiv
 ## Architecture
 
 - **Next.js App Router + React + TypeScript**: interface and lightweight demo REST endpoints; standard Vercel deployment.
-- **Three.js + OrbitControls**: regional 3D water column, actual Natural Earth land geometry, instrument markers/trajectories, transparent depth meshes, and accelerated current particles.
+- **Three.js + OrbitControls**: geographic globe, regional 3D water column, map and depth-section presets, actual Natural Earth land geometry, instrument markers/trajectories, transparent depth meshes, and accelerated current trails. Camera transitions respect reduced-motion preferences.
 - **Shared `lib/ocean.ts` contract**: variables, time/depth metadata, interpolation, profile comparison and palettes. SVG chart uses the same numerical values as exported CSV.
 - **Python + xarray + NumPy + netCDF4 + FastAPI**: bounded NetCDF ingestion. `backend/registry.json` maps CF standard names and variable aliases.
 - **Papa Parse**: browser-side CSV/TSV/text observation parsing with validation.

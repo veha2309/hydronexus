@@ -44,7 +44,7 @@ export const VARIABLES: VariableSpec[] = [
   {
     id: 'temperature',
     label: 'Temperature',
-    unit: 'Â°C',
+    unit: '°C',
     standardName: 'sea_water_temperature',
     min: 2,
     max: 32,
@@ -68,7 +68,7 @@ export const VARIABLES: VariableSpec[] = [
   {
     id: 'chlorophyll',
     label: 'Chlorophyll',
-    unit: 'mg/mÂ³',
+    unit: 'mg/m³',
     standardName: 'mass_concentration_of_chlorophyll_in_sea_water',
     min: 0.01,
     max: 2,
@@ -129,7 +129,7 @@ const locations: [SensorKind, number, number][] = [
 ];
 export const DEMO: Dataset = {
   name: 'Indian Ocean demonstration',
-  source: 'Deterministic synthetic fields Â· not HYCOM or INCOIS observations',
+  source: 'Deterministic synthetic fields · not HYCOM or INCOIS observations',
   synthetic: true,
   variables: VARIABLES,
   observations: locations.map(([kind, latitude, longitude], i) => ({

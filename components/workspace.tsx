@@ -18,7 +18,16 @@ import {
   ChevronRight,
   Download,
   Info,
-  ArrowDown,
+  Globe2,
+  Box,
+  Map as MapIcon,
+  ScanLine,
+  X,
+  Plus,
+  Minus,
+  LocateFixed,
+  Maximize2,
+  ChevronLeft,
   BookOpen,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -39,6 +48,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import ProfileChart from './profile-chart';
+import type { OceanView } from '@/lib/scene-math';
 import {
   DEMO,
   boundsFor,
@@ -54,7 +64,7 @@ import {
 import { parseObservations, validateDataset } from '@/lib/ingestion';
 const OceanScene = dynamic(() => import('./ocean-scene'), {
   ssr: false,
-  loading: () => <div className="scene-loading">Preparing the 3D oceanâ€¦</div>,
+  loading: () => <div className="scene-loading">Preparing the 3D ocean…</div>,
 });
 const KINDS: SensorKind[] = ['Argo', 'Glider', 'CTD', 'BGC'];
 const icons: Record<string, typeof Thermometer> = {
@@ -236,7 +246,49 @@ export default function Workspace() {
     [notice, setNotice] = useState(''),
     [story, setStory] = useState(0),
     [about, setAbout] = useState(false);
+  const [view, setView] = useState<OceanView>('globe');
+  const [controlsOpen, setControlsOpen] = useState(true),
+    [inspectorOpen, setInspectorOpen] = useState(false);
+  const [sectionLatitude, setSectionLatitude] = useState(14.81),
+    [focusRequest, setFocusRequest] = useState(0);
+  const [zoomRequest, setZoomRequest] = useState({ direction: 0, serial: 0 });
   const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const query = matchMedia('(max-width: 680px)');
+    const compact = matchMedia('(max-width: 1099px)');
+    const closePanels = () => {
+      setControlsOpen(false);
+      setInspectorOpen(false);
+    };
+    const onChange = () => {
+      if (compact.matches) closePanels();
+    };
+    const frame = query.matches ? requestAnimationFrame(closePanels) : 0;
+    compact.addEventListener('change', onChange);
+    return () => {
+      cancelAnimationFrame(frame);
+      compact.removeEventListener('change', onChange);
+    };
+  }, []);
+  const selectInstrument = (id: string) => {
+    setSelected(id);
+    setInspectorOpen(true);
+    if (window.innerWidth < 1100) setControlsOpen(false);
+  };
+  const toggleControls = () => {
+    setControlsOpen((v) => !v);
+    if (window.innerWidth < 1100) setInspectorOpen(false);
+  };
+  const toggleInspector = () => {
+    setInspectorOpen((v) => !v);
+    if (window.innerWidth < 1100) setControlsOpen(false);
+  };
+  const views = [
+    { id: 'globe', label: 'Globe', icon: Globe2 },
+    { id: 'volume', label: 'Water column', icon: Box },
+    { id: 'map', label: 'Surface map', icon: MapIcon },
+    { id: 'section', label: 'Section', icon: ScanLine },
+  ] as const;
   const spec =
       data.variables.find((v) => v.id === variable) ?? data.variables[0],
     times = timesFor(data),
@@ -288,6 +340,8 @@ export default function Workspace() {
   };
   const loadDataset = (next: Dataset) => {
     setData(next);
+    const bounds = boundsFor(next);
+    setSectionLatitude((bounds.north + bounds.south) / 2);
     const v = next.variables[0];
     setVariable(v.id);
     setMin(v.min);
@@ -395,6 +449,7 @@ export default function Workspace() {
   ];
   const runStory = (i: number) => {
     setStory(i);
+    setView(i === 0 ? 'volume' : i === 1 ? 'globe' : 'map');
     const s = stories[i];
     chooseVariable(s.variable);
     setDepth(Math.min(depths.at(-1)!, Math.max(depths[0], s.depth)));
@@ -403,7 +458,7 @@ export default function Workspace() {
     if (i === 1) setSelected(data.observations[0]?.id ?? null);
   };
   return (
-    <main className="workspace">
+    <main className="workspace" data-view={view}>
       <header className="topbar">
         <div className="brand">
           <Waves size={31} strokeWidth={1.7} />
@@ -411,7 +466,7 @@ export default function Workspace() {
             <strong>
               Hydro<span>Nexus</span>
             </strong>
-            <small>OCEAN INTELLIGENCE WORKSPACE</small>
+            <small>OCEAN INTELLIGENCE</small>
           </div>
         </div>
         <Tabs value={mode} onValueChange={(v) => setMode(String(v))}>
@@ -439,6 +494,7 @@ export default function Workspace() {
           </button>
           <button
             className="outline-button"
+            aria-label="Import data"
             onClick={() => setImportOpen(true)}
           >
             <Upload size={16} />
@@ -453,18 +509,78 @@ export default function Workspace() {
             aria-label="Dismiss notification"
             onClick={() => setNotice('')}
           >
-            Ã—
+            ×
           </button>
         </output>
       )}
-      <div className="workarea">
-        <aside className="panel controls">
+      <div className="viewbar">
+        <div className="workspace-title">
+          <span className="status-dot" />
+          <strong>Ocean explorer</strong>
+        </div>
+        <Tabs value={view} onValueChange={(v) => setView(v as OceanView)}>
+          <TabsList className="view-tabs" aria-label="Ocean view">
+            {views.map((v) => (
+              <TabsTrigger key={v.id} value={v.id} aria-label={v.label}>
+                <v.icon size={16} />
+                <span>{v.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="view-actions">
+          <button
+            className={controlsOpen ? 'active' : ''}
+            aria-label="Toggle layers panel"
+            aria-pressed={controlsOpen}
+            onClick={toggleControls}
+          >
+            <Layers3 size={16} />
+            <span>Layers</span>
+          </button>
+          <button
+            className={inspectorOpen ? 'active' : ''}
+            aria-label="Toggle inspector panel"
+            aria-pressed={inspectorOpen}
+            onClick={toggleInspector}
+          >
+            <Radar size={16} />
+            <span>Inspector</span>
+          </button>
+          <button
+            aria-label={
+              controlsOpen || inspectorOpen ? 'Hide panels' : 'Show layers'
+            }
+            onClick={() => {
+              const show = !controlsOpen && !inspectorOpen;
+              setControlsOpen(show);
+              setInspectorOpen(false);
+            }}
+          >
+            <Maximize2 size={16} />
+          </button>
+        </div>
+      </div>
+      <div
+        className={`workarea ${controlsOpen ? 'left-open' : ''} ${inspectorOpen ? 'right-open' : ''}`}
+      >
+        <aside
+          className={`panel controls ${controlsOpen ? '' : 'closed'}`}
+          aria-label="Layers panel"
+          inert={!controlsOpen}
+        >
           <div className="panel-heading">
             <Layers3 size={18} />
             <h2>
               {mode === 'scientist' ? 'Ocean layers' : 'Explore the ocean'}
             </h2>
-            <span className="tiny-tag">4D</span>
+            <button
+              className="panel-close"
+              aria-label="Close layers panel"
+              onClick={() => setControlsOpen(false)}
+            >
+              <X size={16} />
+            </button>
           </div>
           {mode === 'explore' ? (
             <div className="stories">
@@ -504,6 +620,23 @@ export default function Workspace() {
             </>
           )}
           <section>
+            {view === 'section' && (
+              <>
+                <Range
+                  label="Section latitude"
+                  value={sectionLatitude}
+                  min={b.south}
+                  max={b.north}
+                  step={0.1}
+                  unit="°"
+                  onChange={setSectionLatitude}
+                />
+                <p className="field-note">
+                  East–west cut. Profiles within 0.5° are projected onto the
+                  section.
+                </p>
+              </>
+            )}
             <Range
               label="Depth slice"
               value={depth}
@@ -518,12 +651,24 @@ export default function Workspace() {
               <span>{depths.at(-1)!.toLocaleString()} m</span>
             </div>
             {mode === 'scientist' && (
-              <>
+              <details className="advanced-controls">
+                <summary>
+                  Display settings <SlidersHorizontal size={15} />
+                </summary>
+                {view !== 'volume' && (
+                  <p className="field-note">
+                    Surface data is sampled at the selected depth. Choose Water
+                    column for volumetric rendering and isosurfaces.
+                  </p>
+                )}
                 <div className="field-label">Rendering</div>
                 <Choice
                   label="Rendering mode"
                   value={renderMode}
-                  onChange={(v) => setRenderMode(v as typeof renderMode)}
+                  onChange={(v) => {
+                    setRenderMode(v as typeof renderMode);
+                    setView('volume');
+                  }}
                   options={[
                     { value: 'volume', label: 'Layered volume' },
                     { value: 'slice', label: 'Depth slice' },
@@ -546,7 +691,7 @@ export default function Workspace() {
                   value={exaggeration}
                   min={1}
                   max={30}
-                  unit="Ã—"
+                  unit="×"
                   onChange={setExaggeration}
                 />
                 <Range
@@ -557,7 +702,7 @@ export default function Workspace() {
                   unit="%"
                   onChange={(v) => setOpacity(v / 100)}
                 />
-              </>
+              </details>
             )}
             <label htmlFor="current-particles" className="toggle-label">
               Current particles
@@ -601,11 +746,11 @@ export default function Workspace() {
             ))}
           </section>
           {mode === 'scientist' && (
-            <section>
-              <div className="section-title">
+            <details className="color-settings">
+              <summary className="section-title">
                 <SlidersHorizontal size={16} />
                 <span>Color scale</span>
-              </div>
+              </summary>
               <Choice
                 label="Color palette"
                 value={palette}
@@ -647,7 +792,7 @@ export default function Workspace() {
                   }}
                 />
               </label>
-            </section>
+            </details>
           )}
           <button className="dataset-button" onClick={() => setAbout(true)}>
             <span className="status-dot" />
@@ -655,7 +800,7 @@ export default function Workspace() {
               {data.synthetic ? 'Demo model' : 'Imported model'}
               <small>
                 {data.grid
-                  ? `${data.grid.latitude.length} Ã— ${data.grid.longitude.length} grid`
+                  ? `${data.grid.latitude.length} × ${data.grid.longitude.length} grid`
                   : 'Procedural Indian Ocean fields'}
               </small>
             </div>
@@ -679,51 +824,89 @@ export default function Workspace() {
             currents={currents}
             sensors={sensors}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectInstrument}
             cameraReset={cameraReset}
+            view={view}
+            sectionLatitude={sectionLatitude}
+            leftPanel={controlsOpen}
+            rightPanel={inspectorOpen}
+            focusRequest={focusRequest}
+            zoomRequest={zoomRequest}
           />
           <div className="scene-heading">
             <p className="eyebrow">
-              {data.grid ? 'REGIONAL MODEL' : 'INDIAN OCEAN'} / 3D WORKSPACE
+              {data.grid ? 'MODEL DOMAIN' : 'REGION 01 / INDIAN OCEAN'}
             </p>
             <h1>
-              {mode === 'scientist'
-                ? 'See beneath the surface.'
-                : stories[story].title}
+              {mode === 'explore'
+                ? stories[story].title
+                : view === 'section'
+                  ? 'Through the water column'
+                  : view === 'volume'
+                    ? 'Beneath the surface'
+                    : 'The ocean, connected.'}
             </h1>
             <p>
-              {spec.label} <span>Â·</span>{' '}
-              {renderMode === 'iso'
-                ? `${iso.toFixed(1)} ${spec.unit} isosurface`
-                : `${depth.toLocaleString()} m below sea level`}
+              {view === 'section'
+                ? `${sectionLatitude.toFixed(1)}° latitude · ${spec.label}`
+                : `${spec.label} · ${depth.toLocaleString()} m depth`}
             </p>
           </div>
           <div className="scene-tools">
             <button
               className="icon-button"
-              aria-label="Reset camera"
-              title="Reset camera"
-              onClick={() => setCameraReset((i) => i + 1)}
+              aria-label="Zoom in"
+              title="Zoom in"
+              onClick={() =>
+                setZoomRequest((v) => ({ direction: 1, serial: v.serial + 1 }))
+              }
             >
-              <RotateCcw size={17} />
+              <Plus size={18} />
             </button>
-            <span className="north-indicator">
-              N<ArrowDown size={18} />
-            </span>
+            <button
+              className="icon-button"
+              aria-label="Zoom out"
+              title="Zoom out"
+              onClick={() =>
+                setZoomRequest((v) => ({ direction: -1, serial: v.serial + 1 }))
+              }
+            >
+              <Minus size={18} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Reset camera"
+              title="Fit model to view"
+              onClick={() => setCameraReset((v) => v + 1)}
+            >
+              <RotateCcw size={16} />
+            </button>
+            {instrument && (
+              <button
+                className="icon-button"
+                aria-label="Focus selected instrument"
+                title="Focus selected instrument"
+                onClick={() => setFocusRequest((v) => v + 1)}
+              >
+                <LocateFixed size={17} />
+              </button>
+            )}
           </div>
-          <div className="depth-badge">
-            <span>WATER COLUMN</span>
-            <strong>
-              {depth.toLocaleString()}
-              <small> m</small>
-            </strong>
-            <span>Vertical scale {exaggeration}Ã—</span>
+          <div className="view-caption">
+            <span className="status-dot" />
+            {view === 'globe'
+              ? 'Earth reference view'
+              : view === 'section'
+                ? 'Latitude section'
+                : view === 'map'
+                  ? 'North-up reference view'
+                  : `${exaggeration}× vertical exaggeration`}
           </div>
           <div className="floating-legend">
             <div>
               <strong>{spec.label}</strong>
               <span>
-                {spec.unit} Â· {log ? 'log' : 'linear'}
+                {spec.unit} · {log ? 'log' : 'linear'}
               </span>
             </div>
             <div
@@ -741,12 +924,32 @@ export default function Workspace() {
             </div>
           </div>
           <div className="scene-footer">
-            <span>Drag to orbit Â· Scroll to zoom Â· Select a sensor</span>
+            <span>
+              {view === 'section'
+                ? 'Scroll to zoom · Change latitude to move the cut'
+                : 'Drag to orbit · Scroll to zoom'}
+            </span>
             <small>
-              Natural Earth coastline Â· Regional equirectangular view
-              {currents ? ' Â· Accelerated particles' : ''}
+              Natural Earth ·{' '}
+              {currents ? 'Accelerated current trails' : 'Geographic reference'}
             </small>
           </div>
+          {!inspectorOpen && instrument && (
+            <button
+              className="selected-peek"
+              onClick={() => selectInstrument(instrument.id)}
+            >
+              <span className={`sensor-dot ${instrument.kind.toLowerCase()}`} />
+              <div>
+                <small>SELECTED OBSERVATION</small>
+                <strong>
+                  {instrument.id.split('@')[0].replace('DEMO-', '')}
+                </strong>
+                <span>Inspect depth profile</span>
+              </div>
+              <ChevronRight size={17} />
+            </button>
+          )}
           {!data.grid && !data.synthetic && (
             <div className="scene-error">
               Observation-only dataset. Import a model grid to render the ocean
@@ -754,7 +957,11 @@ export default function Workspace() {
             </div>
           )}
         </section>
-        <aside className="panel analysis">
+        <aside
+          className={`panel analysis ${inspectorOpen ? '' : 'closed'}`}
+          aria-label="Instrument inspector"
+          inert={!inspectorOpen}
+        >
           <div className="panel-heading">
             <Radar size={18} />
             <h2>
@@ -762,6 +969,13 @@ export default function Workspace() {
                 ? 'Instrument inspector'
                 : 'Ocean field notes'}
             </h2>
+            <button
+              className="panel-close"
+              aria-label="Close inspector panel"
+              onClick={() => setInspectorOpen(false)}
+            >
+              <X size={16} />
+            </button>
           </div>
           {instrument ? (
             <>
@@ -780,12 +994,25 @@ export default function Workspace() {
               </div>
               <h2 className="instrument-id">{instrument.id.split('@')[0]}</h2>
               <p className="coordinates">
-                {Math.abs(instrument.latitude).toFixed(2)}Â°
+                {Math.abs(instrument.latitude).toFixed(2)}°
                 {instrument.latitude < 0 ? 'S' : 'N'} <span>/</span>{' '}
-                {Math.abs(instrument.longitude).toFixed(2)}Â°
+                {Math.abs(instrument.longitude).toFixed(2)}°
                 {instrument.longitude < 0 ? 'W' : 'E'}
               </p>
               <p className="timestamp">{dateLabel(instrument.time)}</p>
+              <button
+                className="focus-button"
+                onClick={() => {
+                  setFocusRequest((v) => v + 1);
+                  if (view === 'section')
+                    setSectionLatitude(
+                      Math.min(b.north, Math.max(b.south, instrument.latitude)),
+                    );
+                }}
+              >
+                <LocateFixed size={14} />
+                Focus in {view === 'globe' ? 'globe' : 'scene'}
+              </button>
               <div className="profile-heading">
                 <h3>{spec.label} profile</h3>
                 <Download size={15} aria-hidden="true" />
@@ -815,16 +1042,16 @@ export default function Workspace() {
                       <span>RMSE</span>
                       <strong>
                         {comparison.rmse === null
-                          ? 'â€”'
+                          ? '—'
                           : comparison.rmse.toFixed(3)}
                         <small>{spec.unit}</small>
                       </strong>
                     </div>
                     <div>
-                      <span>Mean bias (obs âˆ’ model)</span>
+                      <span>Mean bias (obs − model)</span>
                       <strong>
                         {comparison.bias === null
-                          ? 'â€”'
+                          ? '—'
                           : `${comparison.bias >= 0 ? '+' : ''}${comparison.bias.toFixed(3)}`}
                         <small>{spec.unit}</small>
                       </strong>
@@ -832,8 +1059,8 @@ export default function Workspace() {
                   </div>
                   <p className="metric-note">
                     {comparison.count
-                      ? `${comparison.count} matched depths Â· model sampled at profile time`
-                      : 'No overlapping model values at this profileâ€™s location, depth and time.'}
+                      ? `${comparison.count} matched depths · model sampled at profile time`
+                      : 'No overlapping model values at this profile’s location, depth and time.'}
                   </p>
                   {data.synthetic && (
                     <p className="synthetic-note">
@@ -873,8 +1100,8 @@ export default function Workspace() {
                       {comparison?.points.map((p) => (
                         <tr key={p.depth}>
                           <td>{p.depth}</td>
-                          <td>{p.observed?.toFixed(3) ?? 'â€”'}</td>
-                          <td>{p.model?.toFixed(3) ?? 'â€”'}</td>
+                          <td>{p.observed?.toFixed(3) ?? '—'}</td>
+                          <td>{p.model?.toFixed(3) ?? '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -914,7 +1141,7 @@ export default function Workspace() {
                       ? 'Outside model region'
                       : Date.parse(o.time) > Date.parse(time)
                         ? 'Later than scene time'
-                        : `${o.points.at(-1)?.depth} m Â· ${o.kind}`}
+                        : `${o.points.at(-1)?.depth} m · ${o.kind}`}
                   </small>
                 </span>
                 <ChevronRight size={14} />
@@ -925,12 +1152,34 @@ export default function Workspace() {
       </div>
       <footer className="timeline">
         <button
+          className="step-button"
+          aria-label="Previous model time"
+          disabled={timeIndex === 0}
+          onClick={() => {
+            setPlaying(false);
+            setTimeIndex((i) => Math.max(0, i - 1));
+          }}
+        >
+          <ChevronLeft size={17} />
+        </button>
+        <button
           className="play"
           aria-label={playing ? 'Pause time animation' : 'Play time animation'}
           onClick={() => setPlaying((p) => !p)}
           disabled={times.length < 2}
         >
           {playing ? <Pause size={18} /> : <Play size={18} />}
+        </button>
+        <button
+          className="step-button"
+          aria-label="Next model time"
+          disabled={timeIndex === times.length - 1}
+          onClick={() => {
+            setPlaying(false);
+            setTimeIndex((i) => Math.min(times.length - 1, i + 1));
+          }}
+        >
+          <ChevronRight size={17} />
         </button>
         <div className="time-readout">
           <p className="eyebrow">
@@ -960,7 +1209,7 @@ export default function Workspace() {
           onChange={setSpeed}
           options={['0.5', '1', '2', '4'].map((v) => ({
             value: v,
-            label: `${v}Ã—`,
+            label: `${v}×`,
           }))}
         />
       </footer>
@@ -988,7 +1237,7 @@ export default function Workspace() {
               <b>Model fields</b>
               <p>
                 NetCDF through the xarray service, or normalized HydroNexus
-                JSON. Rectilinear latitude Ã— longitude Ã— depth Ã— time grids.
+                JSON. Rectilinear latitude × longitude × depth × time grids.
               </p>
               <a href="/sample-model.nc" download>
                 Sample NetCDF
@@ -1014,7 +1263,7 @@ export default function Workspace() {
             Up to 25 MB. Importing observations replaces the current profile
             collection. Imported data is not saved after a reload.
           </p>
-          {importing && <output>Reading and validating the datasetâ€¦</output>}
+          {importing && <output>Reading and validating the dataset…</output>}
           {importError && (
             <p className="error-text" role="alert">
               {importError}
