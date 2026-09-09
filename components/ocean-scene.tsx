@@ -33,7 +33,7 @@ export type SceneProps = {
   currents: boolean;
   sensors: SensorKind[];
   selected: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string | null) => void;
   cameraReset: number;
   view: OceanView;
   sectionLatitude: number;
@@ -123,6 +123,40 @@ function label(text: string, color = '#789ead', width = 2.3) {
     }),
   );
   sprite.scale.set(width * 1.8, (width * 1.8 * 72) / 256, 1);
+  return sprite;
+}
+function instrumentLabel(text: string, color: string) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d')!;
+  const name = text.length > 24 ? `${text.slice(0, 23)}…` : text;
+  ctx.font = '600 28px Segoe UI';
+  canvas.width = Math.ceil(ctx.measureText(name).width) + 40;
+  canvas.height = 60;
+  ctx.font = '600 28px Segoe UI';
+  ctx.fillStyle = '#0b202e';
+  ctx.beginPath();
+  ctx.roundRect(1, 1, canvas.width - 2, 58, 12);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = '#edf7fa';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(name, canvas.width / 2, 30);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      toneMapped: false,
+      sizeAttenuation: false,
+      depthWrite: false,
+    }),
+  );
+  sprite.scale.set((0.026 * canvas.width) / 60, 0.026, 1);
+  sprite.center.set(0.5, -0.3);
   return sprite;
 }
 function lines(
@@ -416,6 +450,7 @@ export default function OceanScene(props: SceneProps) {
         camera,
       );
       const hit = ray.intersectObjects(e.pickables)[0];
+      if (event.button !== 0) return;
       if (hit) {
         if (
           latest.current.view === 'globe' &&
@@ -423,7 +458,7 @@ export default function OceanScene(props: SceneProps) {
         )
           return;
         latest.current.onSelect(hit.object.userData.id);
-      }
+      } else latest.current.onSelect(null);
     };
     const onLost = (event: Event) => {
       event.preventDefault();
@@ -1085,7 +1120,10 @@ export default function OceanScene(props: SceneProps) {
           }
       }
       if (chosen) {
-        const t = label(o.id.replace('DEMO-', ''), color, globe ? 1.5 : 2);
+        const t = instrumentLabel(
+          o.id.split('@')[0].replace(/^DEMO-/, ''),
+          color,
+        );
         t.position
           .copy(surface)
           .add(

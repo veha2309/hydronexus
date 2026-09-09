@@ -270,9 +270,10 @@ export default function Workspace() {
       compact.removeEventListener('change', onChange);
     };
   }, []);
-  const selectInstrument = (id: string) => {
-    setSelected(id);
-    setInspectorOpen(true);
+  const selectInstrument = (id: string | null) => {
+    const next = id === selected ? null : id;
+    setSelected(next);
+    setInspectorOpen(next !== null);
     if (window.innerWidth < 1100) setControlsOpen(false);
   };
   const toggleControls = () => {
@@ -937,7 +938,10 @@ export default function Workspace() {
           {!inspectorOpen && instrument && (
             <button
               className="selected-peek"
-              onClick={() => selectInstrument(instrument.id)}
+              onClick={() => {
+                setInspectorOpen(true);
+                if (window.innerWidth < 1100) setControlsOpen(false);
+              }}
             >
               <span className={`sensor-dot ${instrument.kind.toLowerCase()}`} />
               <div>
@@ -993,6 +997,13 @@ export default function Workspace() {
                 </span>
               </div>
               <h2 className="instrument-id">{instrument.id.split('@')[0]}</h2>
+              <button
+                className="focus-instrument"
+                onClick={() => selectInstrument(null)}
+                aria-label="Deselect instrument"
+              >
+                Deselect instrument
+              </button>
               <p className="coordinates">
                 {Math.abs(instrument.latitude).toFixed(2)}°
                 {instrument.latitude < 0 ? 'S' : 'N'} <span>/</span>{' '}
@@ -1127,8 +1138,9 @@ export default function Workspace() {
               <button
                 key={o.id}
                 className={o.id === selected ? 'selected' : ''}
+                aria-pressed={o.id === selected}
                 onClick={() => {
-                  setSelected(o.id);
+                  selectInstrument(o.id);
                   if (!sensors.includes(o.kind))
                     setSensors((s) => [...s, o.kind]);
                 }}
