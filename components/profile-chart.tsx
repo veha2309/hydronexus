@@ -57,7 +57,7 @@ export default function ProfileChart({
         className="profile-chart"
         viewBox="0 0 278 280"
         role="img"
-        aria-label={`${variable.label} versus depth for ${instrument.id}. Observations in orange, model in cyan. Values available in the profile table.`}
+        aria-label={`${variable.label} versus depth for ${instrument.id}. Observations in ochre with dashed lines${compare ? ', model in blue with a solid line' : ''}. Values available in the profile table.`}
       >
         {Array.from({ length: 5 }, (_, i) => {
           const d = (i * maxDepth) / 4;
@@ -68,7 +68,7 @@ export default function ProfileChart({
                 x2="251"
                 y1={y(d)}
                 y2={y(d)}
-                stroke="#27414e"
+                stroke="#293944"
                 strokeDasharray="3 4"
               />
               <text x="37" y={y(d) + 4} textAnchor="end">
@@ -95,14 +95,14 @@ export default function ProfileChart({
           <path
             d={path('model')}
             fill="none"
-            stroke="#5ed9cb"
+            stroke="#8eafc5"
             strokeWidth="2"
           />
         )}
         <path
           d={path('observed')}
           fill="none"
-          stroke="#f4b973"
+          stroke="#dba780"
           strokeWidth="2"
           strokeDasharray="5 3"
         />
@@ -114,7 +114,7 @@ export default function ProfileChart({
               cx={x(p.observed!)}
               cy={y(p.depth)}
               r="2.8"
-              fill="#f4b973"
+              fill="#dba780"
             />
           ))}
       </svg>
@@ -126,7 +126,7 @@ export default function ProfileChart({
         {compare && (
           <span>
             <i />
-            Model{data.synthetic ? ' (demo)' : ''}
+            Model
           </span>
         )}
       </div>

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
 import {
   boundsFor,
   colorFor,
@@ -31,6 +32,8 @@ export type SceneProps = {
   renderMode: 'volume' | 'slice' | 'iso';
   iso: number;
   currents: boolean;
+  enhancedLighting: boolean;
+  lightingStrength: number;
   sensors: SensorKind[];
   selected: string | null;
   onSelect: (id: string | null) => void;
@@ -63,6 +66,9 @@ type Engine = {
   field: THREE.Group;
   instruments: THREE.Group;
   particleGroup: THREE.Group;
+  ambient: THREE.HemisphereLight;
+  sun: THREE.DirectionalLight;
+  rim: THREE.DirectionalLight;
   stars: THREE.Points;
   mask: THREE.CanvasTexture | null;
   pickables: THREE.Object3D[];
@@ -196,8 +202,8 @@ function animateCamera(
 function fitCamera(e: Engine, p: SceneProps, animate = true) {
   const width = e.renderer.domElement.clientWidth,
     height = e.renderer.domElement.clientHeight;
-  const left = p.leftPanel ? (width > 680 ? 262 : 0) : 0,
-    right = p.rightPanel && width > 1080 ? 316 : 0;
+  const left = p.leftPanel && width >= 1100 ? 280 : 0,
+    right = p.rightPanel && width >= 1100 ? 360 : 0;
   e.camera.setViewOffset(
     width,
     height,
@@ -206,7 +212,7 @@ function fitCamera(e: Engine, p: SceneProps, animate = true) {
     width,
     height,
   );
-  const distance = fittingDistance(
+  let distance = fittingDistance(
     p.view === 'globe' || p.view === 'section' ? 8 : 11.3,
     width,
     height,
@@ -216,6 +222,22 @@ function fitCamera(e: Engine, p: SceneProps, animate = true) {
   let target = new THREE.Vector3(0, p.view === 'globe' ? 0 : -1.7, 0),
     direction: THREE.Vector3;
   const b = boundsFor(p.data);
+  if (p.view === 'map') {
+    const scale = 20 / Math.max(b.east - b.west, b.north - b.south);
+    const halfWidth =
+      ((b.east - b.west) *
+        scale *
+        Math.cos((((b.north + b.south) / 2) * Math.PI) / 180)) /
+      2;
+    const halfHeight = ((b.north - b.south) * scale) / 2;
+    const tangent = Math.tan((20 * Math.PI) / 180);
+    distance =
+      Math.max(
+        halfWidth /
+          ((tangent * Math.max(160, width - left - right - 110)) / height),
+        halfHeight / ((tangent * Math.max(160, height - 170)) / height),
+      ) * 1.04;
+  }
   if (p.view === 'globe')
     direction = new THREE.Vector3(
       ...globePosition(
@@ -229,7 +251,11 @@ function fitCamera(e: Engine, p: SceneProps, animate = true) {
     target = new THREE.Vector3();
   } else if (p.view === 'section') direction = new THREE.Vector3(0, 0.08, 1);
   else direction = new THREE.Vector3(0.7, 0.82, 1.15).normalize();
-  e.controls.enableRotate = p.view !== 'section';
+  e.controls.enableRotate = p.view !== 'section' && p.view !== 'map';
+  e.controls.mouseButtons.LEFT =
+    p.view === 'map' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+  e.controls.touches.ONE =
+    p.view === 'map' ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE;
   e.controls.minDistance = p.view === 'globe' ? 10.5 : 9;
   e.controls.maxDistance = Math.max(100, distance * 1.8);
   e.controls.maxPolarAngle = p.view === 'globe' ? Math.PI : Math.PI * 0.49;
@@ -348,10 +374,14 @@ export default function OceanScene(props: SceneProps) {
       instruments = new THREE.Group(),
       particleGroup = new THREE.Group();
     scene.add(world, field, instruments, particleGroup);
-    scene.add(new THREE.HemisphereLight(0xb6eaff, 0x102435, 2.1));
+    const ambient = new THREE.HemisphereLight(0xb6eaff, 0x102435, 2.1);
+    scene.add(ambient);
     const key = new THREE.DirectionalLight(0xc9eeff, 2.4);
     key.position.set(-12, 18, -18);
     scene.add(key);
+    const rim = new THREE.DirectionalLight(0x9dbbcc, 0);
+    rim.position.set(14, 6, 10);
+    scene.add(rim);
     const starPositions = new Float32Array(650 * 3);
     for (let i = 0; i < 650; i++) {
       const a = i * 2.399963,
@@ -390,6 +420,9 @@ export default function OceanScene(props: SceneProps) {
       field,
       instruments,
       particleGroup,
+      ambient,
+      sun: key,
+      rim,
       stars,
       mask: null,
       pickables: [],
@@ -415,6 +448,7 @@ export default function OceanScene(props: SceneProps) {
     controls.addEventListener('start', stopTween);
     let frame = 0,
       last = performance.now();
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
     const tick = (now: number) => {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
@@ -426,7 +460,7 @@ export default function OceanScene(props: SceneProps) {
         if (p === 1) e.tween = null;
       }
       if (!document.hidden) {
-        e.animate?.(dt);
+        if (!reducedMotion.matches) e.animate?.(dt);
         controls.update();
         renderer.render(scene, camera);
       }
@@ -708,12 +742,12 @@ export default function OceanScene(props: SceneProps) {
             }),
             [
               new THREE.MeshStandardMaterial({
-                color: 0x264d53,
+                color: 0x202e38,
                 roughness: 1,
                 clippingPlanes: clips,
               }),
               new THREE.MeshStandardMaterial({
-                color: 0x102c3a,
+                color: 0x14212b,
                 roughness: 1,
                 clippingPlanes: clips,
               }),
@@ -724,8 +758,8 @@ export default function OceanScene(props: SceneProps) {
           e.world.add(land);
           const coast = lines(
             p[0].map((v) => new THREE.Vector3(x(v[0]), 0.14, z(v[1]))),
-            0x83b8b6,
-            0.7,
+            0x83959f,
+            0.45,
           );
           (coast.material as THREE.LineBasicMaterial).clippingPlanes = clips;
           e.world.add(coast);
@@ -742,7 +776,7 @@ export default function OceanScene(props: SceneProps) {
           );
         const t = label(
           `${Math.abs(lon).toFixed(0)}\u00b0${lon < 0 ? 'W' : 'E'}`,
-          '#769caf',
+          '#bfd0d6',
           1.2,
         );
         t.position.set(x(lon), bottom - 0.5, zs + (section ? 0.1 : 0.6));
@@ -755,6 +789,15 @@ export default function OceanScene(props: SceneProps) {
             new THREE.Vector3(x(b.west), bottom - 0.02, z(lat)),
             new THREE.Vector3(x(b.east), bottom - 0.02, z(lat)),
           );
+          if (props.view === 'map' && i % 2 === 0) {
+            const tick = label(
+              `${Math.abs(lat).toFixed(0)}°${lat < 0 ? 'S' : 'N'}`,
+              '#bfd0d6',
+              1.1,
+            );
+            tick.position.set(x(b.west) - 0.9, 0.3, z(lat));
+            e.world.add(tick);
+          }
         }
       e.world.add(lines(grid, 0x52798d, 0.23, true));
       if (props.view !== 'map')
@@ -793,19 +836,17 @@ export default function OceanScene(props: SceneProps) {
         e.world.add(border);
         box.dispose();
         const places: [string, number, number][] = [
-          ['INDIA', 22, 79],
-          ['SRI LANKA', 7.1, 80.8],
-          ['ARABIAN SEA', 12, 69],
-          ['BAY OF BENGAL', 17, 87],
+          ['India', 22, 79],
+          ['Sri Lanka', 7.1, 80.8],
+          ['Arabian Sea', 12, 69],
+          ['Bay of Bengal', 17, 87],
         ];
         for (const [name, lat, lon] of places)
           if (lon > b.west && lon < b.east && lat > b.south && lat < b.north) {
             const t = label(
               name,
-              name.includes('SEA') || name.includes('BENGAL')
-                ? '#6ea2b1'
-                : '#a2c5c8',
-              name === 'INDIA' ? 2.5 : 2,
+              name === 'India' || name === 'Sri Lanka' ? '#b6c4cc' : '#223943',
+              name === 'India' ? 2.5 : 2,
             );
             t.position.set(x(lon), 0.3, z(lat));
             e.world.add(t);
@@ -813,6 +854,14 @@ export default function OceanScene(props: SceneProps) {
       }
     }
   }, [domain, props.view, props.data, props.exaggeration]);
+  useEffect(() => {
+    const e = engine.current;
+    if (!e) return;
+    const amount = props.enhancedLighting ? props.lightingStrength : 0;
+    e.ambient.intensity = 2.1 - amount * 0.4;
+    e.sun.intensity = 2.4 + amount * 0.5;
+    e.rim.intensity = amount * 0.35;
+  }, [props.enhancedLighting, props.lightingStrength]);
   useEffect(() => {
     const e = engine.current;
     if (!e || !domain) return;
@@ -1059,8 +1108,11 @@ export default function OceanScene(props: SceneProps) {
               section ? 0.12 : z(o.latitude),
             );
       const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(chosen ? 0.115 : 0.075, 16, 12),
-        new THREE.MeshBasicMaterial({ color, toneMapped: false }),
+        new THREE.SphereGeometry(chosen ? 0.14 : 0.11, 16, 12),
+        new THREE.MeshBasicMaterial({
+          color: props.view === 'map' ? '#163649' : color,
+          toneMapped: false,
+        }),
       );
       marker.position.copy(surface);
       marker.userData.id = o.id;
@@ -1264,6 +1316,9 @@ export default function OceanScene(props: SceneProps) {
   ]);
   return (
     <div className="scene-canvas" ref={host}>
+      {!geography && !error && (
+        <output className="scene-loading">Loading coastline geometry…</output>
+      )}
       {error && (
         <div className="scene-error" role="alert">
           {error}
