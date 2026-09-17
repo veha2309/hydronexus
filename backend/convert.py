@@ -6,6 +6,7 @@ Add variable entries to registry.json without changing the rendering code.
 from __future__ import annotations
 import argparse
 import json
+import math
 from pathlib import Path
 import numpy as np
 import xarray as xr
@@ -57,7 +58,10 @@ def normalize(ds: xr.Dataset, name: str, bbox=None) -> dict:
         raise ValueError('The selected region needs at least 2 latitudes, longitudes and depths, and 1 time.')
     if float(ds.latitude.min()) < -85 or float(ds.latitude.max()) > 85:
         raise ValueError('Polar grids beyond 85 degrees are not supported by this regional renderer.')
-    ds = ds.isel({key: np.unique(np.linspace(0, ds.sizes[key]-1, min(ds.sizes[key], limit)).astype(int)) for key, limit in LIMITS.items()})
+    ds = ds.isel({
+        key: slice(0, None, max(1, math.ceil(ds.sizes[key] / limit)))
+        for key, limit in LIMITS.items()
+    })
     dimensions = ('time', 'depth', 'latitude', 'longitude')
     fields, variables = {}, []
     for identifier, spec in REGISTRY.items():

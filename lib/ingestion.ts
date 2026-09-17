@@ -105,9 +105,9 @@ export function validateDataset(input: unknown): Dataset {
       )
         fail(`Grid ${key} must be strictly increasing numeric coordinates.`);
     }
-    if (g.latitude.length < 2 || g.longitude.length < 2 || g.depth.length < 2)
+    if (g.latitude.length < 2 || g.longitude.length < 2 || g.depth.length < 1)
       fail(
-        '3D grids need at least two coordinates along latitude, longitude and depth.',
+        'Grids need at least two latitude/longitude coordinates and one depth. Surface products use depth 0.',
       );
     if (
       g.latitude[0] < -85 ||

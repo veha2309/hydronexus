@@ -89,15 +89,22 @@ export default function AtlasControls({
         </div>
       </section>
       <section>
-        <Range
-          label="Depth slice"
-          value={depth}
-          min={depths[0]}
-          max={depths.at(-1)!}
-          step={1}
-          unit="m"
-          onChange={onDepth}
-        />
+        {depths.length > 1 ? (
+          <Range
+            label="Depth slice"
+            value={depth}
+            min={depths[0]}
+            max={depths.at(-1)!}
+            step={1}
+            unit="m"
+            onChange={onDepth}
+          />
+        ) : (
+          <div className="field-label">
+            <span>Depth slice</span>
+            <span>{depths[0]} m · surface product</span>
+          </div>
+        )}
         <div className="range-labels">
           <span>Surface · {depths[0]} m</span>
           <span>{depths.at(-1)!.toLocaleString()} m</span>

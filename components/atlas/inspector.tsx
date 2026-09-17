@@ -42,6 +42,19 @@ export default function AtlasInspector({
   onClose: () => void;
 }) {
   const b = boundsFor(data);
+  const qualityValues =
+    instrument?.points.flatMap((point) =>
+      Object.values(point.measurements ?? {}),
+    ) ?? [];
+  const adjustedCount = qualityValues.filter(
+    (measurement) => measurement.sourceFlag === 'adjusted',
+  ).length;
+  const rawCount = qualityValues.filter(
+    (measurement) => measurement.sourceFlag === 'raw',
+  ).length;
+  const imputedCount = qualityValues.filter(
+    (measurement) => measurement.isImputed,
+  ).length;
   return (
     <>
       <div className="panel-heading">
@@ -101,6 +114,36 @@ export default function AtlasInspector({
               <dd>{dateLabel(instrument.time)}</dd>
             </div>
           </dl>
+          {qualityValues.length > 0 && (
+            <>
+              <div className="profile-heading">
+                <h3>Data quality &amp; lineage</h3>
+                <span>Provider QC</span>
+              </div>
+              <dl className="profile-metadata">
+                <div>
+                  <dt>Adjusted values</dt>
+                  <dd>{adjustedCount}</dd>
+                </div>
+                <div>
+                  <dt>Accepted raw values</dt>
+                  <dd>{rawCount}</dd>
+                </div>
+                <div>
+                  <dt>Imputed values</dt>
+                  <dd>{imputedCount}</dd>
+                </div>
+                <div>
+                  <dt>Processing</dt>
+                  <dd>{qualityValues[0]?.processingVersion}</dd>
+                </div>
+              </dl>
+              <p className="metric-note">
+                QC flags 1 and 2 are accepted. Adjusted values are preferred;
+                rejected measurements are not gap-filled.
+              </p>
+            </>
+          )}
           {compare && comparison && (
             <>
               <p className="metric-note">

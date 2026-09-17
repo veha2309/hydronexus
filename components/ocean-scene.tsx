@@ -15,11 +15,14 @@ import {
 import {
   fittingDistance,
   globePosition,
+  magnitudeRelief,
+  wavePhaseOffset,
   type OceanView,
 } from '@/lib/scene-math';
 
 export type SceneProps = {
   data: Dataset;
+  environment?: Dataset;
   variable: string;
   depth: number;
   time: string;
@@ -66,6 +69,7 @@ type Engine = {
   field: THREE.Group;
   instruments: THREE.Group;
   particleGroup: THREE.Group;
+  environmentGroup: THREE.Group;
   ambient: THREE.HemisphereLight;
   sun: THREE.DirectionalLight;
   rim: THREE.DirectionalLight;
@@ -74,6 +78,8 @@ type Engine = {
   pickables: THREE.Object3D[];
   tween: Tween | null;
   animate: ((dt: number) => void) | null;
+  waveAnimate: ((dt: number) => void) | null;
+  environmentAnimate: ((dt: number) => void) | null;
   resize: () => void;
 };
 const SENSOR_COLORS = {
@@ -95,6 +101,20 @@ function clearGroup(group: THREE.Group) {
       }
   });
   group.clear();
+}
+
+function cloudTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 64;
+  const context = canvas.getContext('2d')!;
+  const gradient = context.createRadialGradient(64, 32, 4, 64, 32, 58);
+  gradient.addColorStop(0, 'rgba(235,248,255,0.72)');
+  gradient.addColorStop(0.45, 'rgba(220,240,250,0.32)');
+  gradient.addColorStop(1, 'rgba(210,235,248,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 64);
+  return new THREE.CanvasTexture(canvas);
 }
 function inRing(lon: number, lat: number, ring: number[][]) {
   let inside = false;
@@ -372,8 +392,9 @@ export default function OceanScene(props: SceneProps) {
     const world = new THREE.Group(),
       field = new THREE.Group(),
       instruments = new THREE.Group(),
-      particleGroup = new THREE.Group();
-    scene.add(world, field, instruments, particleGroup);
+      particleGroup = new THREE.Group(),
+      environmentGroup = new THREE.Group();
+    scene.add(world, field, environmentGroup, instruments, particleGroup);
     const ambient = new THREE.HemisphereLight(0xb6eaff, 0x102435, 2.1);
     scene.add(ambient);
     const key = new THREE.DirectionalLight(0xc9eeff, 2.4);
@@ -420,6 +441,7 @@ export default function OceanScene(props: SceneProps) {
       field,
       instruments,
       particleGroup,
+      environmentGroup,
       ambient,
       sun: key,
       rim,
@@ -428,6 +450,8 @@ export default function OceanScene(props: SceneProps) {
       pickables: [],
       tween: null,
       animate: null,
+      waveAnimate: null,
+      environmentAnimate: null,
       resize: () => {},
     };
     e.resize = () => {
@@ -460,7 +484,11 @@ export default function OceanScene(props: SceneProps) {
         if (p === 1) e.tween = null;
       }
       if (!document.hidden) {
-        if (!reducedMotion.matches) e.animate?.(dt);
+        if (!reducedMotion.matches) {
+          e.animate?.(dt);
+          e.waveAnimate?.(dt);
+          e.environmentAnimate?.(dt);
+        }
         controls.update();
         renderer.render(scene, camera);
       }
@@ -507,7 +535,9 @@ export default function OceanScene(props: SceneProps) {
       cancelAnimationFrame(frame);
       observer.disconnect();
       controls.dispose();
-      [world, field, instruments, particleGroup].forEach(clearGroup);
+      [world, field, environmentGroup, instruments, particleGroup].forEach(
+        clearGroup,
+      );
       e.mask?.dispose();
       stars.geometry.dispose();
       (stars.material as THREE.Material).dispose();
@@ -848,12 +878,26 @@ export default function OceanScene(props: SceneProps) {
               name === 'India' || name === 'Sri Lanka' ? '#b6c4cc' : '#223943',
               name === 'India' ? 2.5 : 2,
             );
-            t.position.set(x(lon), 0.3, z(lat));
+            t.position.set(
+              x(lon),
+              props.environment
+                ? 0.82
+                : props.data.grid?.depth.length === 1
+                  ? 0.72
+                  : 0.3,
+              z(lat),
+            );
             e.world.add(t);
           }
       }
     }
-  }, [domain, props.view, props.data, props.exaggeration]);
+  }, [
+    domain,
+    props.view,
+    props.data,
+    props.environment,
+    props.exaggeration,
+  ]);
   useEffect(() => {
     const e = engine.current;
     if (!e) return;
@@ -865,6 +909,7 @@ export default function OceanScene(props: SceneProps) {
   useEffect(() => {
     const e = engine.current;
     if (!e || !domain) return;
+    e.waveAnimate = null;
     clearGroup(e.field);
     const { b, x, z } = domain,
       {
@@ -885,6 +930,11 @@ export default function OceanScene(props: SceneProps) {
     const y = (d: number) => ((-d / 2000) * props.exaggeration) / 5,
       maxDepth = depthsFor(data).at(-1)!;
     const globe = view === 'globe',
+      magnitudeSurface =
+        Boolean(data.grid && data.grid.depth.length === 1) &&
+        (variable === 'wave_height' || variable === 'wind_speed') &&
+        view !== 'map' &&
+        view !== 'section',
       rgb = new THREE.Color();
     const meshGrid = (
       nx: number,
@@ -900,7 +950,10 @@ export default function OceanScene(props: SceneProps) {
         colors: number[] = [],
         uvs: number[] = [],
         indices: number[] = [],
-        valid: boolean[] = [];
+        missingIndices: number[] = [],
+        valid: boolean[] = [],
+        ocean: boolean[] = [],
+        waveParameters: { height: number | null; period: number | null; direction: number | null }[] = [];
       for (let j = 0; j <= ny; j++)
         for (let i = 0; i <= nx; i++) {
           const c = coordinate(i / nx, j / ny),
@@ -908,11 +961,29 @@ export default function OceanScene(props: SceneProps) {
               c.d === null
                 ? null
                 : sample(data, variable, c.lat, c.lon, c.d, time);
+          if (magnitudeSurface && value !== null) {
+            const relief = magnitudeRelief(variable, value, min, max);
+            if (globe)
+              c.pos.addScaledVector(c.pos.clone().normalize(), relief * 0.18);
+            else c.pos.y += relief;
+          }
           positions.push(...c.pos.toArray());
+          waveParameters.push({
+            height: value,
+            period:
+              variable === 'wave_height' && c.d !== null
+                ? sample(data, 'wave_period', c.lat, c.lon, c.d, time)
+                : null,
+            direction:
+              variable === 'wave_height' && c.d !== null
+                ? sample(data, 'wave_direction', c.lat, c.lon, c.d, time)
+                : null,
+          });
           uvs.push(
             (c.lon - b.west) / (b.east - b.west),
             (c.lat - b.south) / (b.north - b.south),
           );
+          ocean.push(!domain.isLand(c.lon, c.lat));
           valid.push(
             value !== null &&
               Number.isFinite(value) &&
@@ -929,8 +1000,12 @@ export default function OceanScene(props: SceneProps) {
           const a = j * (nx + 1) + i,
             c = a + nx + 1;
           if (valid[a] && valid[a + 1] && valid[c]) indices.push(a, a + 1, c);
+          else if (ocean[a] && ocean[a + 1] && ocean[c])
+            missingIndices.push(a, a + 1, c);
           if (valid[a + 1] && valid[c] && valid[c + 1])
             indices.push(a + 1, c + 1, c);
+          else if (ocean[a + 1] && ocean[c] && ocean[c + 1])
+            missingIndices.push(a + 1, c + 1, c);
         }
       const geo = new THREE.BufferGeometry();
       geo.setAttribute(
@@ -940,32 +1015,122 @@ export default function OceanScene(props: SceneProps) {
       geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       geo.setIndex(indices);
+      if (magnitudeSurface) geo.computeVertexNormals();
       const mesh = new THREE.Mesh(
         geo,
-        new THREE.MeshBasicMaterial({
-          vertexColors: true,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: alpha,
-          alphaMap: mask ? e.mask : null,
-          alphaTest: 0.02,
-          depthWrite: false,
-          toneMapped: false,
-        }),
+        magnitudeSurface
+          ? new THREE.MeshStandardMaterial({
+              vertexColors: true,
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: alpha,
+              alphaMap: mask ? e.mask : null,
+              alphaTest: 0.02,
+              depthWrite: true,
+              roughness: 0.62,
+              metalness: 0.06,
+            })
+          : new THREE.MeshBasicMaterial({
+              vertexColors: true,
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: alpha,
+              alphaMap: mask ? e.mask : null,
+              alphaTest: 0.02,
+              depthWrite: false,
+              toneMapped: false,
+            }),
       );
       e.field.add(mesh);
+      if (
+        magnitudeSurface &&
+        variable === 'wave_height' &&
+        !globe &&
+        data.grid?.fields.wave_period &&
+        data.grid.fields.wave_direction
+      ) {
+        const attribute = geo.getAttribute('position') as THREE.BufferAttribute,
+          base = Float32Array.from(attribute.array as ArrayLike<number>);
+        let seconds = 0,
+          pending = 0;
+        e.waveAnimate = (dt) => {
+          seconds += dt;
+          pending += dt;
+          if (pending < 1 / 30) return;
+          pending = 0;
+          for (let index = 0; index < waveParameters.length; index++) {
+            const offset = index * 3,
+              parameters = waveParameters[index];
+            attribute.setY(
+              index,
+              base[offset + 1] +
+                wavePhaseOffset(
+                  parameters.height,
+                  parameters.period,
+                  parameters.direction,
+                  base[offset],
+                  base[offset + 2],
+                  seconds,
+                ),
+            );
+          }
+          attribute.needsUpdate = true;
+          geo.computeVertexNormals();
+        };
+      }
+      if (missingIndices.length && !magnitudeSurface) {
+        const missingGeometry = geo.clone();
+        missingGeometry.setIndex(missingIndices);
+        e.field.add(
+          new THREE.Mesh(
+            missingGeometry,
+            new THREE.MeshBasicMaterial({
+              color: 0x78909c,
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: Math.min(0.34, Math.max(0.14, alpha * 0.42)),
+              alphaMap: mask ? e.mask : null,
+              alphaTest: 0.02,
+              wireframe: true,
+              depthWrite: false,
+              polygonOffset: true,
+              polygonOffsetFactor: -1,
+              toneMapped: false,
+            }),
+          ),
+        );
+      }
     };
     const horizontal = (
       depthAt: (lat: number, lon: number) => number | null,
       alpha: number,
       resolution = 96,
-    ) =>
-      meshGrid(
-        resolution,
-        76,
+    ) => {
+      const nativeGrid = magnitudeSurface ? data.grid : undefined,
+        horizontalResolution = nativeGrid
+          ? nativeGrid.longitude.length - 1
+          : resolution,
+        verticalResolution = nativeGrid ? nativeGrid.latitude.length - 1 : 76;
+      return meshGrid(
+        horizontalResolution,
+        verticalResolution,
         (u, v) => {
-          const lon = b.west + u * (b.east - b.west),
-            lat = b.south + v * (b.north - b.south),
+          const lon = nativeGrid
+              ? nativeGrid.longitude[
+                  Math.min(
+                    nativeGrid.longitude.length - 1,
+                    Math.round(u * horizontalResolution),
+                  )
+                ]
+              : b.west + u * (b.east - b.west),
+            lat = nativeGrid
+              ? nativeGrid.latitude[
+                  Math.min(
+                    nativeGrid.latitude.length - 1,
+                    Math.round(v * verticalResolution),
+                  )
+                ]
+              : b.south + v * (b.north - b.south),
             d = depthAt(lat, lon);
           return {
             lon,
@@ -978,6 +1143,7 @@ export default function OceanScene(props: SceneProps) {
         },
         alpha,
       );
+    };
     if (view === 'section') {
       meshGrid(
         150,
@@ -1078,6 +1244,198 @@ export default function OceanScene(props: SceneProps) {
     props.view,
     props.sectionLatitude,
   ]);
+  useEffect(() => {
+    const e = engine.current,
+      environment = props.environment;
+    if (!e || !domain) return;
+    clearGroup(e.environmentGroup);
+    e.environmentAnimate = null;
+    if (
+      !environment?.grid ||
+      props.view === 'map' ||
+      props.view === 'section' ||
+      !environment.grid.fields.wave_height
+    )
+      return;
+    const grid = environment.grid,
+      { b, x, z } = domain,
+      times = grid.time,
+      environmentTime = times.reduce((nearest, candidate) =>
+        Math.abs(Date.parse(candidate) - Date.parse(props.time)) <
+        Math.abs(Date.parse(nearest) - Date.parse(props.time))
+          ? candidate
+          : nearest,
+      ),
+      spec = environment.variables.find((item) => item.id === 'wave_height'),
+      min = spec?.min ?? 0,
+      max = spec?.max ?? 8,
+      nx = grid.longitude.length - 1,
+      ny = grid.latitude.length - 1,
+      positions: number[] = [],
+      colors: number[] = [],
+      indices: number[] = [],
+      parameters: { height: number | null; period: number | null; direction: number | null }[] = [],
+      color = new THREE.Color();
+    for (let j = 0; j <= ny; j++)
+      for (let i = 0; i <= nx; i++) {
+        const lon = grid.longitude[i],
+          lat = grid.latitude[j],
+          height = sample(environment, 'wave_height', lat, lon, 0, environmentTime),
+          period = sample(environment, 'wave_period', lat, lon, 0, environmentTime),
+          direction = sample(environment, 'wave_direction', lat, lon, 0, environmentTime),
+          relief = magnitudeRelief('wave_height', height, min, max) * 0.58;
+        positions.push(x(lon), 0.08 + relief, z(lat));
+        color.setRGB(
+          ...colorFor(height ?? min, min, max, 'ocean', false),
+          THREE.SRGBColorSpace,
+        );
+        colors.push(color.r, color.g, color.b);
+        parameters.push({ height, period, direction });
+      }
+    const valid = (index: number) =>
+      parameters[index].height !== null &&
+      !domain.isLand(
+        grid.longitude[index % (nx + 1)],
+        grid.latitude[Math.floor(index / (nx + 1))],
+      );
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        const a = j * (nx + 1) + i,
+          c = a + nx + 1;
+        if (valid(a) && valid(a + 1) && valid(c)) indices.push(a, a + 1, c);
+        if (valid(a + 1) && valid(c) && valid(c + 1))
+          indices.push(a + 1, c + 1, c);
+      }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const surface = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.42,
+        roughness: 0.42,
+        metalness: 0.08,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    surface.renderOrder = 3;
+    e.environmentGroup.add(surface);
+
+    const windCount = 110,
+      windPositions = new Float32Array(windCount * 6),
+      windGeometry = new THREE.BufferGeometry();
+    windGeometry.setAttribute('position', new THREE.BufferAttribute(windPositions, 3));
+    const windLines = new THREE.LineSegments(
+      windGeometry,
+      new THREE.LineBasicMaterial({
+        color: 0xd8f4ff,
+        transparent: true,
+        opacity: 0.82,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    );
+    windLines.frustumCulled = false;
+    e.environmentGroup.add(windLines);
+    const windSeeds = Array.from({ length: windCount }, (_, index) => ({
+      lon: b.west + ((index * 0.618034) % 1) * (b.east - b.west),
+      lat: b.south + ((index * 0.414214) % 1) * (b.north - b.south),
+      age: index % 20,
+    }));
+
+    const texture = cloudTexture(),
+      clouds = Array.from({ length: 16 }, (_, index) => {
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: texture,
+            color: 0xe8f7ff,
+            transparent: true,
+            opacity: 0.1 + (index % 4) * 0.02,
+            depthWrite: false,
+          }),
+        );
+        sprite.userData.lon = b.west + ((index * 0.754877) % 1) * (b.east - b.west);
+        sprite.userData.lat = b.south + ((index * 0.56984) % 1) * (b.north - b.south);
+        sprite.position.set(x(sprite.userData.lon), 1.05 + (index % 3) * 0.13, z(sprite.userData.lat));
+        sprite.scale.set(1.6 + (index % 5) * 0.35, 0.7 + (index % 3) * 0.18, 1);
+        e.environmentGroup.add(sprite);
+        return sprite;
+      });
+    const base = Float32Array.from(
+      (geometry.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>,
+    );
+    let seconds = 0,
+      pending = 0;
+    e.environmentAnimate = (dt) => {
+      seconds += dt;
+      pending += dt;
+      if (pending < 1 / 30) return;
+      const step = pending;
+      pending = 0;
+      const attribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let index = 0; index < parameters.length; index++) {
+        const offset = index * 3,
+          item = parameters[index];
+        attribute.setY(
+          index,
+          base[offset + 1] +
+            wavePhaseOffset(
+              item.height,
+              item.period,
+              item.direction,
+              base[offset],
+              base[offset + 2],
+              seconds,
+            ),
+        );
+      }
+      attribute.needsUpdate = true;
+      geometry.computeVertexNormals();
+      windSeeds.forEach((seed, index) => {
+        const u = sample(environment, 'wind_u', seed.lat, seed.lon, 0, environmentTime),
+          v = sample(environment, 'wind_v', seed.lat, seed.lon, 0, environmentTime),
+          start = index * 6;
+        seed.lon += (u ?? 0) * step * 0.035;
+        seed.lat += (v ?? 0) * step * 0.035;
+        seed.age += step;
+        if (
+          seed.lon < b.west || seed.lon > b.east ||
+          seed.lat < b.south || seed.lat > b.north || seed.age > 24
+        ) {
+          seed.lon = b.west + ((index * 0.754877 + seconds * 0.01) % 1) * (b.east - b.west);
+          seed.lat = b.south + ((index * 0.56984 + seconds * 0.01) % 1) * (b.north - b.south);
+          seed.age = 0;
+        }
+        const hidden = u === null || v === null || domain.isLand(seed.lon, seed.lat),
+          px = x(seed.lon),
+          pz = z(seed.lat),
+          scale = 0.04;
+        windPositions.set(
+          hidden ? [0, 0, 0, 0, 0, 0] : [px, 0.72, pz, px - (u ?? 0) * scale, 0.72, pz + (v ?? 0) * scale],
+          start,
+        );
+      });
+      windGeometry.attributes.position.needsUpdate = true;
+      clouds.forEach((cloud, index) => {
+        const u = sample(environment, 'wind_u', cloud.userData.lat, cloud.userData.lon, 0, environmentTime) ?? 0,
+          v = sample(environment, 'wind_v', cloud.userData.lat, cloud.userData.lon, 0, environmentTime) ?? 0;
+        cloud.userData.lon += u * step * 0.012;
+        cloud.userData.lat += v * step * 0.012;
+        if (cloud.userData.lon > b.east) cloud.userData.lon = b.west;
+        if (cloud.userData.lon < b.west) cloud.userData.lon = b.east;
+        if (cloud.userData.lat > b.north) cloud.userData.lat = b.south;
+        if (cloud.userData.lat < b.south) cloud.userData.lat = b.north;
+        cloud.position.x = x(cloud.userData.lon);
+        cloud.position.z = z(cloud.userData.lat);
+        cloud.material.rotation = Math.sin(seconds * 0.08 + index) * 0.08;
+      });
+    };
+  }, [domain, props.environment, props.time, props.view]);
   useEffect(() => {
     const e = engine.current;
     if (!e || !domain) return;

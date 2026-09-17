@@ -9,11 +9,23 @@ export type VariableSpec = {
   min: number;
   max: number;
 };
+export type QualityValue = {
+  value: number;
+  qcFlag: string;
+  sourceFlag: 'adjusted' | 'raw' | 'derived' | 'rejected';
+  uncertainty: number | null;
+  isImputed: boolean;
+  imputationMethod: string | null;
+  sourceDatasetVersion: string;
+  processingVersion: string;
+};
 export type ProfilePoint = {
   depth: number;
   latitude?: number;
   longitude?: number;
   values: Record<string, number>;
+  measurements?: Record<string, QualityValue>;
+  depthDerivation?: string;
 };
 export type Instrument = {
   id: string;

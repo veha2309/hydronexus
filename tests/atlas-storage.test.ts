@@ -47,3 +47,25 @@ void test('corrupt, obsolete, and out-of-range stored settings are handled safel
   assert.equal(restored.display.opacity, 1);
   assert.equal(restored.display.log, false);
 });
+void test('large model grids do not overflow browser storage', () => {
+  const large = {
+    ...DEMO,
+    name: 'large live subset',
+    source: 'bounded-live-source'.repeat(90_000),
+    synthetic: false,
+    grid: {
+      latitude: [0, 1],
+      longitude: [70, 71],
+      depth: [0, 10],
+      time: ['2026-09-17T00:00:00Z'],
+      fields: { temperature: [24, 24, 24, 24, 24, 24, 24, 24] },
+    },
+    observations: [],
+  };
+  const state = decodeAtlas(
+    JSON.stringify({ version: 1, data: null, display: DEFAULT_DISPLAY }),
+  )!;
+  const encoded = encodeAtlas({ ...state, data: large });
+  assert.ok(encoded.length < 1_500_000);
+  assert.equal(JSON.parse(encoded).data, null);
+});

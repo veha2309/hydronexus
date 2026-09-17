@@ -36,6 +36,7 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/.hydronexus-data/
 /.venv/
 __pycache__/
 *.pyc

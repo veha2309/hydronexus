@@ -15,6 +15,7 @@ export function AtlasHeader({
   onAbout,
   onStart,
   guided,
+  allowImport = true,
 }: {
   synthetic: boolean;
   view: OceanView;
@@ -27,6 +28,7 @@ export function AtlasHeader({
   onAbout: () => void;
   onStart: () => void;
   guided: boolean;
+  allowImport?: boolean;
 }) {
   return (
     <>
@@ -54,10 +56,12 @@ export function AtlasHeader({
           >
             <Info size={18} />
           </button>
-          <button className="outline-button" onClick={onImport}>
-            <Upload size={16} />
-            <span>Import data</span>
-          </button>
+          {allowImport && (
+            <button className="outline-button" onClick={onImport}>
+              <Upload size={16} />
+              <span>Import data</span>
+            </button>
+          )}
         </div>
       </header>
       <nav className="viewbar" aria-label="Atlas tools">

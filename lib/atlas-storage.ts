@@ -29,11 +29,18 @@ export type SavedAtlas = {
   guideTime: number;
 };
 export function encodeAtlas(state: SavedAtlas) {
-  return JSON.stringify({
+  const payload = {
     version: 1,
     ...state,
     data: state.data === DEMO ? null : state.data,
-  });
+  };
+  const encoded = JSON.stringify(payload);
+  // localStorage is intentionally only a convenience for small imports. Live
+  // model subsets can contain millions of values and remain available in the
+  // current session; their UI settings are persisted against the bundled data.
+  return encoded.length <= 1_500_000
+    ? encoded
+    : JSON.stringify({ ...payload, data: null, selected: null });
 }
 export function decodeAtlas(raw: string): SavedAtlas | null {
   try {

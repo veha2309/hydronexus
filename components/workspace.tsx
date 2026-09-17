@@ -51,6 +51,7 @@ import {
   encodeAtlas,
   decodeAtlas,
 } from '@/lib/atlas-storage';
+import { researchHeaders } from '@/lib/research-client';
 
 const OceanScene = dynamic(() => import('./ocean-scene'), {
   ssr: false,
@@ -59,8 +60,16 @@ const OceanScene = dynamic(() => import('./ocean-scene'), {
   ),
 });
 
-export default function Workspace() {
+export default function Workspace({
+  publicMode = false,
+}: {
+  publicMode?: boolean;
+}) {
   const [data, setData] = useState<Dataset>(DEMO);
+  const [layers, setLayers] = useState<{ id: string; data: Dataset }[]>([
+    { id: 'demo', data: DEMO },
+  ]);
+  const [activeLayerId, setActiveLayerId] = useState('demo');
   const [variable, setVariable] = useState('temperature');
   const [depth, setDepth] = useState(100);
   const [view, setView] = useState<OceanView>('map');
@@ -83,10 +92,27 @@ export default function Workspace() {
     [importError, setImportError] = useState('');
   const [about, setAbout] = useState(false),
     [notice, setNotice] = useState('');
+  const [subsetBounds, setSubsetBounds] = useState({
+    west: 65,
+    south: 0,
+    east: 100,
+    north: 28,
+  });
+  const [sliceQuery, setSliceQuery] = useState({
+    variables: '',
+    timeStart: '',
+    timeEnd: '',
+    depthMin: '',
+    depthMax: '',
+  });
   const fileRef = useRef<HTMLInputElement>(null);
   const guideTime = useRef(0);
   const spec =
     data.variables.find((v) => v.id === variable) ?? data.variables[0];
+  const environmentLayer = layers.find(
+    (layer) =>
+      layer.id === 'rsmc-ww3' && layer.data !== data && layer.data.grid,
+  )?.data;
   const times = timesFor(data),
     time = times[Math.min(timeIndex, times.length - 1)],
     bounds = boundsFor(data);
@@ -110,15 +136,18 @@ export default function Workspace() {
   const patchDisplay = (patch: Partial<DisplaySettings>) =>
     setDisplay((old) => ({ ...old, ...patch }));
 
-  const [storageReady, setStorageReady] = useState(false);
+  const [storageReady, setStorageReady] = useState(publicMode);
   const storageWarned = useRef(false);
   useEffect(() => {
+    if (publicMode) return;
     const frame = requestAnimationFrame(() => {
       try {
         const raw = localStorage.getItem(ATLAS_STORAGE_KEY);
         const saved = raw ? decodeAtlas(raw) : null;
         if (saved) {
           setData(saved.data);
+          setLayers([{ id: 'restored', data: saved.data }]);
+          setActiveLayerId('restored');
           setVariable(saved.variable);
           setDepth(saved.depth);
           setView(saved.view);
@@ -143,9 +172,9 @@ export default function Workspace() {
       setStorageReady(true);
     });
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [publicMode]);
   useEffect(() => {
-    if (!storageReady) return;
+    if (!storageReady || publicMode) return;
     const save = () => {
       try {
         localStorage.setItem(
@@ -194,6 +223,7 @@ export default function Workspace() {
     controlsOpen,
     inspectorOpen,
     guideStep,
+    publicMode,
   ]);
 
   useEffect(() => {
@@ -257,6 +287,7 @@ export default function Workspace() {
     const v = data.variables.find((v) => v.id === id);
     if (!v) return;
     setVariable(id);
+    if (id === 'wave_height' || id === 'wind_speed') setView('volume');
     patchDisplay({
       min: v.min,
       max: v.max,
@@ -270,8 +301,9 @@ export default function Workspace() {
             : 'ocean',
     });
   };
-  const loadDataset = (next: Dataset) => {
+  const showDataset = (next: Dataset, id: string) => {
     setData(next);
+    setActiveLayerId(id);
     setGuideStep(null);
     const b = boundsFor(next),
       v = next.variables[0];
@@ -289,9 +321,18 @@ export default function Workspace() {
     setPlaying(false);
     setSelected(null);
     setInspectorOpen(false);
-    setView('map');
+    setView(
+      v.id === 'wave_height' || v.id === 'wind_speed' ? 'volume' : 'map',
+    );
     setSensors(SENSOR_KINDS);
     setCameraReset((i) => i + 1);
+  };
+  const loadDataset = (next: Dataset, id = `local-${Date.now()}`) => {
+    setLayers((current) => {
+      const retained = current.filter((layer) => layer.id !== id && layer.id !== 'demo');
+      return [...retained, { id, data: next }];
+    });
+    showDataset(next, id);
   };
   const applyGuideStep = (index: number) => {
     const preset = investigationPreset(index);
@@ -316,6 +357,8 @@ export default function Workspace() {
   };
   const startInvestigation = () => {
     setData(DEMO);
+    setLayers([{ id: 'demo', data: DEMO }]);
+    setActiveLayerId('demo');
     guideTime.current = 0;
     setNotice('');
     applyGuideStep(0);
@@ -352,23 +395,21 @@ export default function Workspace() {
         loadDataset(next);
         setNotice(`Loaded ${next.name}.`);
       } else if (/\.(nc|nc4)$/i.test(file.name)) {
-        const endpoint = process.env.NEXT_PUBLIC_DATA_API_URL;
-        if (!endpoint)
-          throw new Error(
-            'NetCDF ingestion requires the Python service. Run backend/main.py and set NEXT_PUBLIC_DATA_API_URL, or convert with backend/convert.py and import the resulting JSON.',
-          );
         const form = new FormData();
         form.append('file', file);
-        const response = await fetch(`${endpoint.replace(/\/$/, '')}/ingest`, {
+        const response = await fetch('/api/research/ingest', {
           method: 'POST',
+          headers: researchHeaders(),
           body: form,
         });
         const body = await response.json();
         if (!response.ok)
           throw new Error(
-            typeof body.detail === 'string'
-              ? body.detail
-              : 'NetCDF conversion failed.',
+            typeof body.error === 'string'
+              ? body.error
+              : typeof body.detail === 'string'
+                ? body.detail
+                : 'NetCDF conversion failed.',
           );
         loadDataset(validateDataset(body));
         setNotice(`Loaded ${file.name} through the xarray pipeline.`);
@@ -383,6 +424,204 @@ export default function Workspace() {
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  async function loadLatestArgo() {
+    setImportError('');
+    setImporting(true);
+    try {
+      const response = await fetch(
+        '/api/research/profiles?source=incois-argo&west=65&south=0&east=100&north=28&maxProfiles=100',
+        { headers: researchHeaders(), cache: 'no-store' },
+      );
+      const body = await response.json();
+      if (!response.ok)
+        throw new Error(
+          typeof body.error === 'string'
+            ? body.error
+            : typeof body.detail === 'string'
+              ? body.detail
+              : 'The INCOIS Argo adapter failed.',
+        );
+      if (!Array.isArray(body.observations) || body.observations.length === 0)
+        throw new Error(
+          'No quality-controlled Argo profiles matched the region.',
+        );
+      const next: Dataset = {
+        name: 'Latest INCOIS Argo profiles',
+        source: `INCOIS ERDDAP Indian_ARGO_Floats · ${body.processingVersion} · raw and QC artifacts retained`,
+        synthetic: false,
+        variables: DEMO.variables.filter((item) =>
+          ['temperature', 'salinity'].includes(item.id),
+        ),
+        observations: body.observations,
+      };
+      loadDataset(next, 'incois-argo');
+      setImportOpen(false);
+      setNotice(
+        body.stale
+          ? `Loaded ${next.observations.length} profiles from the last valid QC artifact because INCOIS is unavailable.`
+          : `Loaded ${next.observations.length} quality-controlled INCOIS Argo profiles.`,
+      );
+    } catch (error) {
+      setImportError(
+        error instanceof Error ? error.message : 'Unable to load INCOIS Argo.',
+      );
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function loadLatestHycom() {
+    setImportError('');
+    setImporting(true);
+    try {
+      const response = await fetch('/api/research/subsets', {
+        method: 'POST',
+        headers: researchHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          source: 'rsmc-hycom',
+          west: 65,
+          south: 0,
+          east: 100,
+          north: 28,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok)
+        throw new Error(
+          typeof body.error === 'string'
+            ? body.error
+            : typeof body.detail === 'string'
+              ? body.detail
+              : 'The RSMC HYCOM adapter failed.',
+        );
+      const next = validateDataset(body);
+      loadDataset(next, 'rsmc-hycom');
+      setImportOpen(false);
+      setNotice(
+        body.stale
+          ? `Loaded ${next.name} from the last processed subset because RSMC is unavailable.`
+          : `Loaded ${next.name} through bounded OPeNDAP processing.`,
+      );
+    } catch (error) {
+      setImportError(
+        error instanceof Error ? error.message : 'Unable to load RSMC HYCOM.',
+      );
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function loadCombinedWorkspace() {
+    setImportError('');
+    setImporting(true);
+    try {
+      const response = await fetch('/api/research/subsets', {
+        method: 'POST',
+        headers: researchHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          sources: ['rsmc-hycom', 'rsmc-ww3'],
+          ...subsetBounds,
+          ...(sliceQuery.variables.trim()
+            ? {
+                variables: sliceQuery.variables
+                  .split(',')
+                  .map((value) => value.trim())
+                  .filter(Boolean),
+              }
+            : {}),
+          ...(sliceQuery.timeStart
+            ? { time_start: `${sliceQuery.timeStart}:00Z` }
+            : {}),
+          ...(sliceQuery.timeEnd
+            ? { time_end: `${sliceQuery.timeEnd}:00Z` }
+            : {}),
+          ...(sliceQuery.depthMin !== ''
+            ? { depth_min: Number(sliceQuery.depthMin) }
+            : {}),
+          ...(sliceQuery.depthMax !== ''
+            ? { depth_max: Number(sliceQuery.depthMax) }
+            : {}),
+          max_time_steps: 12,
+          max_depth_levels: 12,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok || !Array.isArray(body.layers) || !body.layers.length)
+        throw new Error(
+          typeof body.detail === 'string'
+            ? body.detail
+            : 'The scientific data server could not prepare the workspace.',
+        );
+      const nextLayers: { id: string; data: Dataset }[] = body.layers.map(
+        (item: unknown, index: number) => {
+        const dataset = validateDataset(item);
+        const layerId =
+          typeof (item as { layerId?: unknown }).layerId === 'string'
+            ? String((item as { layerId: string }).layerId)
+            : `server-layer-${index}`;
+          return { id: layerId, data: dataset };
+        },
+      );
+      setLayers(nextLayers);
+      showDataset(nextLayers[0].data, nextLayers[0].id);
+      if (nextLayers.some((layer) => layer.id === 'rsmc-ww3')) {
+        setView('volume');
+        setDisplay((current) => ({ ...current, currents: true }));
+      }
+      setImportOpen(false);
+      setNotice(
+        `Loaded ${nextLayers.length} server-processed layers in one bounded workspace${body.partial ? '; one or more requested sources were unavailable' : ''}.`,
+      );
+    } catch (error) {
+      setImportError(
+        error instanceof Error ? error.message : 'Unable to load the combined workspace.',
+      );
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function loadLatestWw3() {
+    setImportError('');
+    setImporting(true);
+    try {
+      const response = await fetch('/api/research/subsets', {
+        method: 'POST',
+        headers: researchHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          source: 'rsmc-ww3',
+          west: 65,
+          south: 0,
+          east: 100,
+          north: 28,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok)
+        throw new Error(
+          typeof body.error === 'string'
+            ? body.error
+            : typeof body.detail === 'string'
+              ? body.detail
+              : 'The RSMC WW3 adapter failed.',
+        );
+      const next = validateDataset(body);
+      loadDataset(next, 'rsmc-ww3');
+      setImportOpen(false);
+      setNotice(
+        body.stale
+          ? `Loaded ${next.name} from the last processed subset because RSMC is unavailable.`
+          : `Loaded ${next.name} through bounded OPeNDAP processing. Missing cells are shown as a subdued wireframe.`,
+      );
+    } catch (error) {
+      setImportError(
+        error instanceof Error ? error.message : 'Unable to load RSMC WW3.',
+      );
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -402,6 +641,7 @@ export default function Workspace() {
         onAbout={() => setAbout(true)}
         onStart={startInvestigation}
         guided={guideStep !== null}
+        allowImport={!publicMode}
       />
       {notice && (
         <output className="notice">
@@ -414,6 +654,21 @@ export default function Workspace() {
             <X size={17} />
           </button>
         </output>
+      )}
+      {layers.length > 1 && (
+        <nav className="dataset-stack" aria-label="Loaded data layers">
+          <span>{layers.length} server layers</span>
+          {layers.map((layer) => (
+            <button
+              key={layer.id}
+              className={layer.id === activeLayerId ? 'active' : ''}
+              aria-pressed={layer.id === activeLayerId}
+              onClick={() => showDataset(layer.data, layer.id)}
+            >
+              {layer.data.name}
+            </button>
+          ))}
+        </nav>
       )}
       {guideStep !== null && (
         <GuidedInvestigation
@@ -484,6 +739,7 @@ export default function Workspace() {
       >
         <OceanScene
           data={data}
+          environment={environmentLayer}
           variable={spec.id}
           depth={depth}
           time={time}
@@ -511,12 +767,23 @@ export default function Workspace() {
             {view === 'section'
               ? `Section at ${sectionLatitude.toFixed(1)}° latitude`
               : view === 'volume'
-                ? 'Water column'
+                ? spec.id === 'wave_height'
+                  ? 'Representative directional sea-state animation'
+                  : spec.id === 'wind_speed'
+                    ? '3D wind-speed magnitude surface'
+                    : environmentLayer
+                      ? 'HYCOM water column with WW3 waves, wind and clouds'
+                      : 'Water column'
                 : view === 'globe'
                   ? 'Global reference'
                   : 'Regional surface map'}
             <span className="scene-date"> · {dateLabel(time)}</span>
           </p>
+          {environmentLayer && view === 'volume' && (
+            <span className="environment-badge">
+              WW3 animated surface · directional wind · cloud layer
+            </span>
+          )}
         </div>
         <div className="scene-tools">
           {view === 'map' && (
@@ -591,8 +858,11 @@ export default function Workspace() {
                 : 'Drag to orbit · Scroll to zoom'}
           </span>
           <span>
-            {view === 'volume' || view === 'section'
-              ? `${display.exaggeration}× vertical exaggeration`
+            {(spec.id === 'wave_height' || spec.id === 'wind_speed') &&
+            view === 'volume'
+              ? 'Relief normalized to the visible legend range'
+              : view === 'volume' || view === 'section'
+                ? `${display.exaggeration}× vertical exaggeration`
               : 'Natural Earth coastline'}
           </span>
         </div>
@@ -690,6 +960,136 @@ export default function Workspace() {
           </DialogDescription>
           <div className="import-options">
             <div>
+              <b>Combined server workspace</b>
+              <p>
+                Ask the scientific service for bounded HYCOM and WW3 slices in
+                parallel. Both layers remain loaded; switching layers does not
+                discard the other product.
+              </p>
+              <fieldset className="subset-bounds">
+                <legend>Geographic subset</legend>
+                {(['west', 'south', 'east', 'north'] as const).map((key) => (
+                  <label key={key}>
+                    {key[0].toUpperCase() + key.slice(1)}
+                    <input
+                      type="number"
+                      step="0.5"
+                      min={key === 'west' || key === 'east' ? -180 : -85}
+                      max={key === 'west' || key === 'east' ? 180 : 85}
+                      value={subsetBounds[key]}
+                      onChange={(event) =>
+                        setSubsetBounds((current) => ({
+                          ...current,
+                          [key]: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
+              </fieldset>
+              <fieldset className="slice-fields">
+                <legend>Optional server slice</legend>
+                <label>
+                  Variables
+                  <input
+                    placeholder="temperature, wave_height"
+                    value={sliceQuery.variables}
+                    onChange={(event) =>
+                      setSliceQuery((current) => ({
+                        ...current,
+                        variables: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                {(['timeStart', 'timeEnd'] as const).map((key) => (
+                  <label key={key}>
+                    {key === 'timeStart' ? 'From time (UTC)' : 'To time (UTC)'}
+                    <input
+                      type="datetime-local"
+                      value={sliceQuery[key]}
+                      onChange={(event) =>
+                        setSliceQuery((current) => ({
+                          ...current,
+                          [key]: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
+                {(['depthMin', 'depthMax'] as const).map((key) => (
+                  <label key={key}>
+                    {key === 'depthMin'
+                      ? 'Minimum depth (m)'
+                      : 'Maximum depth (m)'}
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={sliceQuery[key]}
+                      onChange={(event) =>
+                        setSliceQuery((current) => ({
+                          ...current,
+                          [key]: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
+              </fieldset>
+              <button
+                className="outline-button"
+                disabled={importing}
+                onClick={() => void loadCombinedWorkspace()}
+              >
+                Load combined ocean workspace
+              </button>
+            </div>
+            <div>
+              <b>Live waves · RSMC WW3</b>
+              <p>
+                Load bounded significant wave height, peak period, direction
+                and derived wind speed from the latest INCOIS forecast cycle.
+              </p>
+              <button
+                className="outline-button"
+                disabled={importing}
+                onClick={() => void loadLatestWw3()}
+              >
+                Load latest WW3 forecast
+              </button>
+            </div>
+            <div>
+              <b>Live model · RSMC HYCOM</b>
+              <p>
+                Load the latest bounded Indian Ocean temperature, salinity and
+                current forecast through INCOIS OPeNDAP. The multi-gigabyte
+                source file stays on the server.
+              </p>
+              <button
+                className="outline-button"
+                disabled={importing}
+                onClick={() => void loadLatestHycom()}
+              >
+                Load latest HYCOM forecast
+              </button>
+            </div>
+            <div>
+              <b>Live source · INCOIS Argo</b>
+              <p>
+                Fetch the latest bounded Indian Ocean profiles through the
+                private adapter. Provider QC flags are enforced and adjusted
+                temperature, salinity and pressure are preferred.
+              </p>
+              <button
+                className="outline-button"
+                disabled={importing}
+                onClick={() => void loadLatestArgo()}
+              >
+                Load latest Argo profiles
+              </button>
+            </div>
+            <div>
               <b>Observations</b>
               <p>
                 CSV, TSV or delimited text. Columns: id, kind, latitude,
@@ -741,6 +1141,8 @@ export default function Workspace() {
             disabled={importing}
             onClick={() => {
               loadDataset(DEMO);
+              setLayers([{ id: 'demo', data: DEMO }]);
+              setActiveLayerId('demo');
               setImportOpen(false);
               setNotice('Restored the synthetic demonstration dataset.');
             }}
