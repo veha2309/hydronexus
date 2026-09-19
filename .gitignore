@@ -42,3 +42,6 @@ __pycache__/
 *.tsbuildinfo
 !.env.example
 .vercel
+
+.hydronexus-data/
+.python-packages/
